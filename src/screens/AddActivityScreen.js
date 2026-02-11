@@ -1,199 +1,119 @@
 import React, { useState } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, ActivityIndicator, Platform,
-} from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { createActivity } from '../services/api';
-import { COLORS, ACTIVITY_TYPES } from '../config';
+import { TYPES, DAYS } from '../config';
 
 export default function AddActivityScreen({ navigation }) {
-  const { user } = useAuth();
-  const [name, setName] = useState('');
-  const [selectedType, setSelectedType] = useState('reminder');
-  const [hour, setHour] = useState('08');
-  const [minute, setMinute] = useState('00');
-  const [loading, setLoading] = useState(false);
+  const { user }   = useAuth();
+  const { C }      = useTheme();
+  const [name, setName]   = useState('');
+  const [type, setType]   = useState('reminder');
+  const [hour, setHour]   = useState('08');
+  const [min,  setMin]    = useState('00');
+  const [days, setDays]   = useState([0,1,2,3,4,5,6]);
+  const [busy, setBusy]   = useState(false);
 
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter an activity name');
-      return;
-    }
+  const toggle = (d) => setDays(p => p.includes(d) ? p.filter(x=>x!==d) : [...p,d].sort((a,b)=>a-b));
 
-    const h = parseInt(hour);
-    const m = parseInt(minute);
-    if (isNaN(h) || h < 0 || h > 23) {
-      Alert.alert('Error', 'Hour must be between 0 and 23');
-      return;
-    }
-    if (isNaN(m) || m < 0 || m > 59) {
-      Alert.alert('Error', 'Minute must be between 0 and 59');
-      return;
-    }
-
-    const scheduledTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
-
-    setLoading(true);
+  const submit = async () => {
+    if (!name.trim()) { Alert.alert('Error','Enter a name'); return; }
+    if (!days.length) { Alert.alert('Error','Pick at least one day'); return; }
+    const h = parseInt(hour), m = parseInt(min);
+    if (isNaN(h)||h<0||h>23) { Alert.alert('Error','Hour 0-23'); return; }
+    if (isNaN(m)||m<0||m>59) { Alert.alert('Error','Minute 0-59'); return; }
+    setBusy(true);
     try {
-      await createActivity(user.user_id, name.trim(), scheduledTime, selectedType);
-      Alert.alert('✅ Created!', 'Activity shared with your partner', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
-    } catch (e) {
-      Alert.alert('Error', e?.response?.data?.error || 'Failed to create activity');
-    } finally {
-      setLoading(false);
-    }
+      await createActivity({
+        user_id: user.user_id, name: name.trim(),
+        scheduled_time: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`,
+        activity_type: type, repeat_days: days.join(''),
+      });
+      Alert.alert('✅ Created!','Shared with your partner',[{ text:'OK', onPress:()=>navigation.goBack() }]);
+    } catch(e) {
+      Alert.alert('Error', e?.response?.data?.error || 'Failed');
+    } finally { setBusy(false); }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Activity Name */}
-      <Text style={styles.label}>Activity Name</Text>
-      <View style={styles.inputWrap}>
-        <MaterialIcons name="edit" size={20} color={COLORS.textLight} style={styles.inputIcon} />
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. Morning Water, Stretch Break"
-          value={name}
-          onChangeText={setName}
-          placeholderTextColor={COLORS.textLight}
-          maxLength={50}
-        />
+    <ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:20, paddingBottom:48 }}>
+      <Text style={s.lbl(C)}>Name</Text>
+      <View style={s.row(C)}>
+        <MaterialIcons name="edit" size={20} color={C.muted} />
+        <TextInput style={[s.inp, { color:C.text }]} placeholder="e.g. Morning walk" placeholderTextColor={C.muted}
+          value={name} onChangeText={setName} maxLength={50} />
       </View>
 
-      {/* Time Picker */}
-      <Text style={styles.label}>Scheduled Time</Text>
-      <View style={styles.timeRow}>
-        <View style={styles.timeBox}>
-          <Text style={styles.timeLabel}>Hour (0-23)</Text>
-          <TextInput
-            style={styles.timeInput}
-            value={hour}
-            onChangeText={setHour}
-            keyboardType="numeric"
-            maxLength={2}
-            placeholder="08"
-            placeholderTextColor={COLORS.textLight}
-          />
-        </View>
-        <Text style={styles.timeSep}>:</Text>
-        <View style={styles.timeBox}>
-          <Text style={styles.timeLabel}>Minute (0-59)</Text>
-          <TextInput
-            style={styles.timeInput}
-            value={minute}
-            onChangeText={setMinute}
-            keyboardType="numeric"
-            maxLength={2}
-            placeholder="00"
-            placeholderTextColor={COLORS.textLight}
-          />
-        </View>
-      </View>
-      <View style={styles.timePreview}>
-        <MaterialIcons name="schedule" size={16} color={COLORS.primary} />
-        <Text style={styles.timePreviewText}>
-          {' '}Scheduled for {String(parseInt(hour) || 0).padStart(2, '0')}:{String(parseInt(minute) || 0).padStart(2, '0')}
-        </Text>
+      <Text style={s.lbl(C)}>Time</Text>
+      <View style={{ flexDirection:'row', alignItems:'center', gap:12 }}>
+        {[['Hour (0–23)', hour, setHour], ['Min (0–59)', min, setMin]].map(([lbl, val, set], i) => (
+          <View key={i} style={[s.tBox(C), { flex:1 }]}>
+            <Text style={{ fontSize:11, color:C.muted, marginBottom:4 }}>{lbl}</Text>
+            <TextInput style={{ fontSize:32, fontWeight:'bold', color:C.primary, textAlign:'center' }}
+              value={val} onChangeText={set} keyboardType="numeric" maxLength={2} />
+          </View>
+        ))}
+        <Text style={{ fontSize:32, fontWeight:'bold', color:C.text }}>:</Text>
       </View>
 
-      {/* Activity Type */}
-      <Text style={styles.label}>Activity Type</Text>
-      <View style={styles.typeGrid}>
-        {ACTIVITY_TYPES.map((type) => {
-          const selected = selectedType === type.value;
+      <Text style={s.lbl(C)}>Repeat</Text>
+      <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+        {[['All',  [0,1,2,3,4,5,6]], ['Weekdays',[1,2,3,4,5]], ['Weekend',[0,6]]].map(([l,d]) => (
+          <TouchableOpacity key={l} onPress={() => setDays(d)}
+            style={{ backgroundColor:C.primary+'18', borderRadius:20, paddingHorizontal:12, paddingVertical:5 }}>
+            <Text style={{ color:C.primary, fontSize:12, fontWeight:'600' }}>{l}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={{ flexDirection:'row', justifyContent:'space-between' }}>
+        {DAYS.map(d => {
+          const on = days.includes(d.v);
           return (
-            <TouchableOpacity
-              key={type.value}
-              style={[styles.typeCard, selected && { borderColor: type.color, backgroundColor: type.color + '15' }]}
-              onPress={() => setSelectedType(type.value)}
-            >
-              <View style={[styles.typeIcon, { backgroundColor: type.color + '20' }]}>
-                <MaterialIcons name={type.icon} size={26} color={type.color} />
-              </View>
-              <Text style={[styles.typeLabel, selected && { color: type.color, fontWeight: '700' }]}>
-                {type.label}
-              </Text>
-              {selected && (
-                <MaterialIcons name="check-circle" size={16} color={type.color} style={styles.typeCheck} />
-              )}
+            <TouchableOpacity key={d.v} onPress={() => toggle(d.v)}
+              style={{ width:42, height:42, borderRadius:21, borderWidth:1.5, justifyContent:'center', alignItems:'center',
+                borderColor: on ? C.primary : C.border, backgroundColor: on ? C.primary : C.card }}>
+              <Text style={{ fontSize:11, fontWeight:'700', color: on ? '#fff' : C.muted }}>{d.s}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* Info box */}
-      <View style={styles.infoBox}>
-        <MaterialIcons name="info-outline" size={18} color={COLORS.primary} />
-        <Text style={styles.infoText}>
-          {'  '}Both you and your partner will be notified at the scheduled time. Complete activities to earn 10 points each!
-        </Text>
+      <Text style={s.lbl(C)}>Type</Text>
+      <View style={{ flexDirection:'row', flexWrap:'wrap', gap:10 }}>
+        {TYPES.map(t => {
+          const sel = type === t.value;
+          return (
+            <TouchableOpacity key={t.value} onPress={() => setType(t.value)}
+              style={{ width:'47%', backgroundColor: sel ? t.color+'18' : C.card, borderRadius:16, borderWidth:2,
+                borderColor: sel ? t.color : C.border, padding:14, alignItems:'center' }}>
+              <View style={{ width:46, height:46, borderRadius:14, backgroundColor: t.color+'22', justifyContent:'center', alignItems:'center', marginBottom:8 }}>
+                <MaterialIcons name={t.icon} size={24} color={t.color} />
+              </View>
+              <Text style={{ fontSize:13, color: sel ? t.color : C.text, fontWeight: sel ? '700' : '500' }}>{t.label}</Text>
+              {sel && <MaterialIcons name="check-circle" size={14} color={t.color} style={{ position:'absolute', top:8, right:8 }} />}
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
-      {/* Submit */}
-      <TouchableOpacity
-        style={[styles.btn, loading && styles.btnDisabled]}
-        onPress={handleCreate}
-        disabled={loading}
-      >
-        {loading
-          ? <ActivityIndicator color="#fff" />
-          : <>
-              <MaterialIcons name="add-circle" size={22} color="#fff" />
-              <Text style={styles.btnText}>  CREATE ACTIVITY</Text>
-            </>
-        }
+      <TouchableOpacity onPress={submit} disabled={busy}
+        style={{ backgroundColor:C.primary, borderRadius:14, paddingVertical:18, alignItems:'center',
+          flexDirection:'row', justifyContent:'center', marginTop:28, opacity: busy ? 0.7 : 1,
+          elevation:6, shadowColor:C.primary, shadowOffset:{width:0,height:4}, shadowOpacity:0.35, shadowRadius:10 }}>
+        {busy ? <ActivityIndicator color="#fff" /> : <>
+          <MaterialIcons name="add-circle" size={22} color="#fff" />
+          <Text style={{ color:'#fff', fontSize:16, fontWeight:'bold', marginLeft:8 }}>CREATE ACTIVITY</Text>
+        </>}
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 20, paddingBottom: 40 },
-  label: { fontSize: 15, fontWeight: '700', color: COLORS.text, marginBottom: 10, marginTop: 20 },
-  inputWrap: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', borderRadius: 14, borderWidth: 1.5,
-    borderColor: COLORS.border, paddingHorizontal: 16, paddingVertical: 14,
-  },
-  inputIcon: { marginRight: 12 },
-  input: { flex: 1, fontSize: 16, color: COLORS.text },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  timeBox: { flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1.5, borderColor: COLORS.border, padding: 16 },
-  timeLabel: { fontSize: 12, color: COLORS.textLight, marginBottom: 6 },
-  timeInput: { fontSize: 32, fontWeight: 'bold', color: COLORS.primary, textAlign: 'center' },
-  timeSep: { fontSize: 32, fontWeight: 'bold', color: COLORS.text },
-  timePreview: {
-    flexDirection: 'row', alignItems: 'center',
-    marginTop: 10, backgroundColor: COLORS.primary + '15',
-    padding: 10, borderRadius: 10,
-  },
-  timePreviewText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
-  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  typeCard: {
-    width: '47%', backgroundColor: '#fff', borderRadius: 16,
-    borderWidth: 2, borderColor: COLORS.border,
-    padding: 16, alignItems: 'center',
-  },
-  typeIcon: { width: 50, height: 50, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
-  typeLabel: { fontSize: 13, color: COLORS.text, fontWeight: '500', textAlign: 'center' },
-  typeCheck: { position: 'absolute', top: 10, right: 10 },
-  infoBox: {
-    flexDirection: 'row', backgroundColor: COLORS.primary + '10',
-    borderRadius: 12, padding: 14, marginTop: 20, alignItems: 'flex-start',
-  },
-  infoText: { flex: 1, fontSize: 13, color: COLORS.text, lineHeight: 20 },
-  btn: {
-    backgroundColor: COLORS.primary, borderRadius: 14,
-    paddingVertical: 18, alignItems: 'center',
-    flexDirection: 'row', justifyContent: 'center',
-    marginTop: 24, shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 8,
-  },
-  btnDisabled: { opacity: 0.6 },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
-});
+const s = {
+  lbl: (C) => ({ fontSize:14, fontWeight:'700', color:C.text, marginBottom:10, marginTop:22 }),
+  row: (C) => ({ flexDirection:'row', alignItems:'center', backgroundColor:C.input, borderRadius:14, borderWidth:1.5, borderColor:C.border, paddingHorizontal:14, paddingVertical:13, gap:10 }),
+  inp: { flex:1, fontSize:16 },
+  tBox: (C) => ({ backgroundColor:C.input, borderRadius:14, borderWidth:1.5, borderColor:C.border, padding:14 }),
+};

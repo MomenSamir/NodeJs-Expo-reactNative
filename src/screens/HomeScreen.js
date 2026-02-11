@@ -1,297 +1,220 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  RefreshControl, Alert, Modal, ActivityIndicator,
+  RefreshControl, Alert, Switch, ActivityIndicator,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
-import { getActivities, completeActivity, getPoints } from '../services/api';
-import { connectSocket, disconnectSocket, onEvent, offEvent, emitComplete } from '../services/socket';
-import { triggerAlert } from '../services/notifications';
-import { COLORS, ACTIVITY_TYPES } from '../config';
+import { useTheme } from '../context/ThemeContext';
+import { getActivities, completeActivity, getPoints, deleteActivity } from '../services/api';
+import { connectSocket, disconnectSocket, on, off } from '../services/socket';
+import { showNotif, buzz } from '../services/notifications';
+import { TYPES, DAYS, VIBES } from '../config';
 
 export default function HomeScreen({ navigation }) {
   const { user, logout } = useAuth();
-  const [activities, setActivities] = useState([]);
-  const [points, setPoints] = useState({ user_points: 0, partner_points: 0 });
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [reminderModal, setReminderModal] = useState(null);
+  const { C, dark, toggle } = useTheme();
 
-  const loadData = async () => {
+  const [acts,    setActs]    = useState([]);
+  const [pts,     setPts]     = useState({ user_points:0, partner_points:0, partner_username:'Partner' });
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(false);
+  const [online,  setOnline]  = useState([]);
+
+  const load = async () => {
     try {
-      const [acts, pts] = await Promise.all([
-        getActivities(),
-        getPoints(user.user_id),
-      ]);
-      setActivities(acts);
-      setPoints(pts);
-    } catch (e) {
-      console.log('Load error:', e.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+      const [a, p] = await Promise.all([getActivities(), getPoints(user.user_id)]);
+      setActs(a); setPts(p);
+    } catch (e) { console.log(e.message); }
+    finally { setLoading(false); setRefresh(false); }
   };
 
-  useFocusEffect(useCallback(() => { loadData(); }, []));
+  useFocusEffect(useCallback(() => { load(); }, []));
 
   useEffect(() => {
-    const sock = connectSocket(user.user_id);
+    connectSocket(user.user_id, user.username);
 
-    onEvent('activity_created', () => loadData());
-
-    onEvent('activity_reminder', async (data) => {
-      await triggerAlert(data.activity_type, '⏰ Activity Time!', data.name);
-      setReminderModal(data);
+    on('online_users',       (list) => setOnline(list));
+    on('user_joined',        ({ userId, username }) => setOnline(p => p.find(u=>u.userId===userId) ? p : [...p,{userId,username}]));
+    on('user_left',          ({ userId }) => setOnline(p => p.filter(u=>u.userId!==userId)));
+    on('activity_created',   () => load());
+    on('activity_deleted',   () => load());
+    on('activity_completed', () => load());
+    on('points_updated',     () => getPoints(user.user_id).then(setPts));
+    on('activity_reminder',  async (d) => {
+      await showNotif('⏰ Activity Time!', d.name);
+    });
+    on('receive_vibration', ({ fromUsername, vibrationType }) => {
+      const vib = VIBES.find(v => v.value === vibrationType);
+      if (vib) {
+        buzz(vib.pattern);
+        showNotif(`${vib.emoji} ${fromUsername} sent you a ${vib.label}!`, '');
+      }
     });
 
-    onEvent('activity_completed', () => loadData());
-    onEvent('points_updated', () => getPoints(user.user_id).then(setPoints));
-
     return () => {
-      offEvent('activity_created');
-      offEvent('activity_reminder');
-      offEvent('activity_completed');
-      offEvent('points_updated');
+      ['online_users','user_joined','user_left','activity_created','activity_deleted',
+       'activity_completed','points_updated','activity_reminder','receive_vibration'].forEach(off);
     };
   }, []);
 
-  const handleComplete = async (activityId) => {
-    try {
-      await completeActivity(activityId, user.user_id);
-      emitComplete(activityId, user.user_id);
-      setReminderModal(null);
-      await loadData();
-      Alert.alert('🎉 Great job!', 'You earned 10 points!');
-    } catch (e) {
-      Alert.alert('Error', 'Failed to complete activity');
-    }
+  const getType  = (t) => TYPES.find(x => x.value === t) || TYPES[3];
+  const dayLabel = (r) => {
+    if (!r || r === '0123456') return 'Every day';
+    if (r === '12345') return 'Weekdays';
+    if (r === '06')    return 'Weekends';
+    return r.split('').map(d => DAYS[+d]?.s).join(', ');
   };
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: () => { disconnectSocket(); logout(); } },
-    ]);
+  const partnerOnline = online.some(u => u.username === pts.partner_username);
+
+  const doComplete = async (id) => {
+    try { await completeActivity(id, user.user_id); await load(); Alert.alert('🎉', '+10 points!'); }
+    catch { Alert.alert('Error', 'Failed'); }
   };
 
-  const getTypeInfo = (type) =>
-    ACTIVITY_TYPES.find(t => t.value === type) || ACTIVITY_TYPES[3];
+  const doDelete = (id) => Alert.alert('Delete?', 'Remove for both users?', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: async () => { await deleteActivity(id); load(); } },
+  ]);
 
-  const renderActivity = ({ item }) => {
-    const typeInfo = getTypeInfo(item.activity_type);
-    const completed = item.completed === 1 || item.completed === true;
+  const doLogout = () => Alert.alert('Logout?', '', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Logout', style: 'destructive', onPress: () => { disconnectSocket(user.user_id); logout(); } },
+  ]);
 
+  const renderItem = ({ item }) => {
+    const type = getType(item.activity_type);
+    const done = item.completed === 1 || item.completed === true;
     return (
-      <View style={[styles.card, completed && styles.cardDone]}>
-        <View style={[styles.iconBadge, { backgroundColor: typeInfo.color + '20' }]}>
-          <MaterialIcons name={typeInfo.icon} size={26} color={typeInfo.color} />
+      <View style={[ss(C).card, done && { opacity: 0.55 }]}>
+        <View style={[ss(C).badge, { backgroundColor: type.color + '22' }]}>
+          <MaterialIcons name={type.icon} size={24} color={type.color} />
         </View>
-        <View style={styles.cardInfo}>
-          <Text style={[styles.cardTitle, completed && styles.strikethrough]}>
-            {item.name}
-          </Text>
-          <View style={styles.cardMeta}>
-            <MaterialIcons name="schedule" size={13} color={COLORS.textLight} />
-            <Text style={styles.metaText}> {item.scheduled_time?.slice(0, 5)}</Text>
-            <Text style={styles.dot}>•</Text>
-            <Text style={styles.metaText}>{typeInfo.label}</Text>
-          </View>
-          {completed && (
-            <Text style={styles.completedBy}>✓ Done by {item.completed_by}</Text>
-          )}
+        <View style={{ flex:1 }}>
+          <Text style={[ss(C).cardTitle, done && { textDecorationLine:'line-through', color:C.muted }]}>{item.name}</Text>
+          <Text style={ss(C).cardMeta}>{item.scheduled_time?.slice(0,5)} · {dayLabel(item.repeat_days)}</Text>
+          {done && <Text style={[ss(C).cardMeta, { color: C.success, fontWeight:'600' }]}>✓ {item.completed_by}</Text>}
         </View>
-        {!completed ? (
-          <TouchableOpacity
-            style={styles.doneBtn}
-            onPress={() => handleComplete(item.id)}
-          >
-            <MaterialIcons name="check" size={20} color="#fff" />
+        <View style={{ alignItems:'center', gap:6 }}>
+          {done
+            ? <MaterialIcons name="check-circle" size={26} color={C.success} />
+            : <TouchableOpacity style={[ss(C).check, { backgroundColor: type.color }]} onPress={() => doComplete(item.id)}>
+                <MaterialIcons name="check" size={18} color="#fff" />
+              </TouchableOpacity>
+          }
+          <TouchableOpacity onPress={() => doDelete(item.id)}>
+            <MaterialIcons name="delete-outline" size={18} color={C.danger} />
           </TouchableOpacity>
-        ) : (
-          <MaterialIcons name="check-circle" size={28} color={COLORS.success} />
-        )}
+        </View>
       </View>
     );
   };
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={{ marginTop: 12, color: COLORS.textLight }}>Connecting...</Text>
-      </View>
-    );
-  }
+  if (loading) return <View style={[ss(C).center, { backgroundColor: C.bg }]}><ActivityIndicator size="large" color={C.primary} /></View>;
 
   return (
-    <View style={styles.container}>
+    <View style={[ss(C).wrap]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[ss(C).header]}>
         <View>
-          <Text style={styles.greeting}>Hello, {user.username}! 👋</Text>
-          <Text style={styles.subGreeting}>Stay active with your partner</Text>
+          <Text style={ss(C).hello}>Hey {user.username} 👋</Text>
+          <View style={{ flexDirection:'row', alignItems:'center', marginTop:4 }}>
+            <View style={{ width:8, height:8, borderRadius:4, backgroundColor: partnerOnline ? C.online : C.offline, marginRight:6 }} />
+            <Text style={ss(C).partnerTxt}>{pts.partner_username} is {partnerOnline ? 'online' : 'offline'}</Text>
+          </View>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-          <MaterialIcons name="logout" size={22} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+          <Switch value={dark} onValueChange={toggle}
+            trackColor={{ false:'rgba(255,255,255,0.3)', true:'rgba(255,255,255,0.5)' }}
+            thumbColor="#fff" style={{ transform:[{ scale:0.8 }] }} />
+          <TouchableOpacity onPress={doLogout} style={ss(C).logBtn}>
+            <MaterialIcons name="logout" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Points */}
-      <View style={styles.pointsRow}>
-        <View style={styles.pointsCard}>
-          <Text style={styles.pointsLabel}>Your Points</Text>
-          <Text style={styles.pointsValue}>{points.user_points}</Text>
-          <MaterialIcons name="star" size={18} color={COLORS.primary} />
+      <View style={ss(C).ptsRow}>
+        <View style={ss(C).ptsCard}>
+          <Text style={ss(C).ptsLabel}>Your Points</Text>
+          <Text style={ss(C).ptsVal}>{pts.user_points}</Text>
+          <MaterialIcons name="star" size={14} color={C.primary} />
         </View>
-        <View style={[styles.pointsCard, styles.pointsCardPartner]}>
-          <Text style={styles.pointsLabel}>Partner</Text>
-          <Text style={styles.pointsValue}>{points.partner_points}</Text>
-          <MaterialIcons name="star-border" size={18} color={COLORS.primaryLight} />
+        <View style={[ss(C).ptsCard, { backgroundColor:C.bg, borderWidth:1.5, borderColor:C.border }]}>
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <View style={{ width:7, height:7, borderRadius:4, backgroundColor: partnerOnline ? C.online : C.offline, marginRight:5 }} />
+            <Text style={ss(C).ptsLabel}>{pts.partner_username}</Text>
+          </View>
+          <Text style={ss(C).ptsVal}>{pts.partner_points}</Text>
+          <MaterialIcons name="star-border" size={14} color={C.primary} />
         </View>
       </View>
 
-      {/* Activity List */}
-      <View style={styles.listHeader}>
-        <Text style={styles.listTitle}>Activities</Text>
-        <Text style={styles.listCount}>{activities.length} total</Text>
+      {/* Quick actions */}
+      <View style={ss(C).qRow}>
+        {[
+          { label:'Calendar', icon:'calendar-month', color:C.primary,    screen:'Calendar'  },
+          { label:'Moments',  icon:'chat-bubble',    color:'#FF6B9D',    screen:'Moments'   },
+          { label:'Buzz',     icon:'vibration',      color:C.warn,       screen:'Vibration' },
+        ].map(btn => (
+          <TouchableOpacity key={btn.label} style={ss(C).qBtn} onPress={() => navigation.navigate(btn.screen)}>
+            <MaterialIcons name={btn.icon} size={22} color={btn.color} />
+            <Text style={[ss(C).qTxt, { color: C.text }]}>{btn.label}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      <FlatList
-        data={activities}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={renderActivity}
-        contentContainerStyle={styles.list}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); loadData(); }}
-            colors={[COLORS.primary]}
-          />
-        }
+      {/* List */}
+      <View style={ss(C).listHdr}>
+        <Text style={ss(C).listTitle}>Activities</Text>
+        <Text style={{ color: C.muted, fontSize:13 }}>{acts.length} total</Text>
+      </View>
+
+      <FlatList data={acts} keyExtractor={i => String(i.id)} renderItem={renderItem}
+        contentContainerStyle={{ paddingHorizontal:14, paddingBottom:110 }}
+        refreshControl={<RefreshControl refreshing={refresh} onRefresh={() => { setRefresh(true); load(); }} colors={[C.primary]} />}
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <MaterialIcons name="event-note" size={72} color={COLORS.border} />
-            <Text style={styles.emptyTitle}>No activities yet</Text>
-            <Text style={styles.emptyText}>Tap + to add your first shared activity</Text>
+          <View style={ss(C).empty}>
+            <MaterialIcons name="event-note" size={64} color={C.border} />
+            <Text style={[ss(C).emptyT, { color: C.text }]}>No activities yet</Text>
+            <Text style={{ color: C.muted, marginTop:6 }}>Tap + to add one</Text>
           </View>
         }
       />
 
       {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate('AddActivity')}
-      >
+      <TouchableOpacity style={[ss(C).fab, { backgroundColor: C.primary }]}
+        onPress={() => navigation.navigate('AddActivity')}>
         <MaterialIcons name="add" size={30} color="#fff" />
       </TouchableOpacity>
-
-      {/* Reminder Modal */}
-      <Modal visible={!!reminderModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalEmoji}>⏰</Text>
-            <Text style={styles.modalTitle}>Time for Activity!</Text>
-            <Text style={styles.modalName}>{reminderModal?.name}</Text>
-            <Text style={styles.modalType}>
-              {getTypeInfo(reminderModal?.activity_type)?.label}
-            </Text>
-            <TouchableOpacity
-              style={styles.modalDoneBtn}
-              onPress={() => handleComplete(reminderModal?.id)}
-            >
-              <Text style={styles.modalDoneText}>✓ Mark as Done (+10 pts)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalLaterBtn}
-              onPress={() => setReminderModal(null)}
-            >
-              <Text style={styles.modalLaterText}>Later</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: {
-    backgroundColor: COLORS.primary,
-    paddingTop: 56, paddingBottom: 24, paddingHorizontal: 24,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-  },
-  greeting: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  subGreeting: { fontSize: 14, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
-  logoutBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  pointsRow: { flexDirection: 'row', margin: 16, gap: 12 },
-  pointsCard: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16,
-    alignItems: 'center', shadowColor: '#6C3CE1',
-    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4,
-  },
-  pointsCardPartner: { backgroundColor: COLORS.background, borderWidth: 1.5, borderColor: COLORS.border },
-  pointsLabel: { fontSize: 13, color: COLORS.textLight, marginBottom: 4 },
-  pointsValue: { fontSize: 36, fontWeight: 'bold', color: COLORS.primary },
-  listHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', paddingHorizontal: 20, marginBottom: 8,
-  },
-  listTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.text },
-  listCount: { fontSize: 14, color: COLORS.textLight },
-  list: { paddingHorizontal: 16, paddingBottom: 100 },
-  card: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 16,
-    flexDirection: 'row', alignItems: 'center', marginBottom: 12,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
-  },
-  cardDone: { opacity: 0.65 },
-  iconBadge: { width: 52, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
-  cardInfo: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 4 },
-  strikethrough: { textDecorationLine: 'line-through', color: COLORS.textLight },
-  cardMeta: { flexDirection: 'row', alignItems: 'center' },
-  metaText: { fontSize: 13, color: COLORS.textLight },
-  dot: { color: COLORS.textLight, marginHorizontal: 6 },
-  completedBy: { fontSize: 12, color: COLORS.success, fontWeight: '600', marginTop: 4 },
-  doneBtn: {
-    backgroundColor: COLORS.primary, width: 36, height: 36,
-    borderRadius: 18, justifyContent: 'center', alignItems: 'center',
-  },
-  fab: {
-    position: 'absolute', bottom: 28, right: 24,
-    width: 60, height: 60, borderRadius: 30,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center', alignItems: 'center',
-    shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4, shadowRadius: 12, elevation: 10,
-  },
-  empty: { alignItems: 'center', paddingTop: 60 },
-  emptyTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.text, marginTop: 16 },
-  emptyText: { fontSize: 14, color: COLORS.textLight, marginTop: 8, textAlign: 'center' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  modalCard: {
-    backgroundColor: '#fff', borderTopLeftRadius: 32, borderTopRightRadius: 32,
-    padding: 32, alignItems: 'center',
-  },
-  modalEmoji: { fontSize: 56, marginBottom: 12 },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, marginBottom: 8 },
-  modalName: { fontSize: 18, color: COLORS.primary, fontWeight: '600', marginBottom: 4 },
-  modalType: { fontSize: 14, color: COLORS.textLight, marginBottom: 28 },
-  modalDoneBtn: {
-    backgroundColor: COLORS.success, borderRadius: 14,
-    paddingVertical: 16, paddingHorizontal: 40, width: '100%', alignItems: 'center', marginBottom: 12,
-  },
-  modalDoneText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  modalLaterBtn: { paddingVertical: 12 },
-  modalLaterText: { color: COLORS.textLight, fontSize: 15 },
+const ss = (C) => StyleSheet.create({
+  wrap:       { flex:1, backgroundColor:C.bg },
+  center:     { flex:1, justifyContent:'center', alignItems:'center' },
+  header:     { backgroundColor:C.header, paddingTop:54, paddingBottom:18, paddingHorizontal:20, flexDirection:'row', justifyContent:'space-between', alignItems:'center' },
+  hello:      { fontSize:20, fontWeight:'bold', color:'#fff' },
+  partnerTxt: { fontSize:13, color:'rgba(255,255,255,0.8)' },
+  logBtn:     { width:36, height:36, borderRadius:18, backgroundColor:'rgba(255,255,255,0.2)', justifyContent:'center', alignItems:'center' },
+  ptsRow:     { flexDirection:'row', margin:14, gap:12 },
+  ptsCard:    { flex:1, backgroundColor:C.card, borderRadius:16, padding:14, alignItems:'center', elevation:3, shadowColor:'#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.07, shadowRadius:6 },
+  ptsLabel:   { fontSize:12, color:C.muted, marginBottom:4 },
+  ptsVal:     { fontSize:30, fontWeight:'bold', color:C.primary },
+  qRow:       { flexDirection:'row', paddingHorizontal:14, gap:10, marginBottom:10 },
+  qBtn:       { flex:1, backgroundColor:C.card, borderRadius:14, alignItems:'center', paddingVertical:12, gap:4, elevation:2, shadowColor:'#000', shadowOffset:{width:0,height:1}, shadowOpacity:0.06, shadowRadius:4 },
+  qTxt:       { fontSize:12, fontWeight:'600' },
+  listHdr:    { flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:18, marginBottom:6 },
+  listTitle:  { fontSize:17, fontWeight:'bold', color:C.text },
+  card:       { backgroundColor:C.card, borderRadius:16, padding:14, flexDirection:'row', alignItems:'center', marginBottom:10, elevation:2, shadowColor:'#000', shadowOffset:{width:0,height:1}, shadowOpacity:0.06, shadowRadius:5 },
+  badge:      { width:48, height:48, borderRadius:14, justifyContent:'center', alignItems:'center', marginRight:12 },
+  cardTitle:  { fontSize:15, fontWeight:'600', color:C.text, marginBottom:3 },
+  cardMeta:   { fontSize:12, color:C.muted },
+  check:      { width:34, height:34, borderRadius:17, justifyContent:'center', alignItems:'center' },
+  fab:        { position:'absolute', bottom:26, right:22, width:58, height:58, borderRadius:29, justifyContent:'center', alignItems:'center', elevation:10, shadowColor:C.primary, shadowOffset:{width:0,height:6}, shadowOpacity:0.4, shadowRadius:12 },
+  empty:      { alignItems:'center', paddingTop:60 },
+  emptyT:     { fontSize:18, fontWeight:'bold', marginTop:14 },
 });

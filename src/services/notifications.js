@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import * as Device from 'expo-device';
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -11,51 +11,36 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export const requestPermissions = async () => {
+export async function requestPermissions() {
   if (!Device.isDevice) return false;
-
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let finalStatus = existing;
-
-  if (existing !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
+  const { status } = await Notifications.requestPermissionsAsync();
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('activity-reminders', {
-      name: 'Activity Reminders',
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'Shared Activity',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#6C3CE1',
-      sound: 'default',
     });
   }
+  return status === 'granted';
+}
 
-  return finalStatus === 'granted';
-};
-
-export const triggerAlert = async (activityType, title, body) => {
-  // Haptic feedback based on type
-  switch (activityType) {
-    case 'alarm':
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      break;
-    case 'exercise':
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      break;
-    default:
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+export async function showNotif(title, body) {
+  try {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await Notifications.scheduleNotificationAsync({
+      content: { title, body, sound: true },
+      trigger: null,
+    });
+  } catch (e) {
+    console.log('notif error:', e.message);
   }
+}
 
-  // Show notification
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      sound: 'default',
-      priority: Notifications.AndroidNotificationPriority.MAX,
-    },
-    trigger: null, // immediate
-  });
-};
+export function buzz(pattern) {
+  try {
+    Vibration.cancel();
+    Vibration.vibrate(pattern);
+  } catch {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+  }
+}

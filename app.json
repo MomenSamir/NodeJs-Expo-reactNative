@@ -1,36 +1,34 @@
 {
   "expo": {
     "name": "Shared Activity",
-    "slug": "shared-activity-app",
-    "version": "1.0.0",
+    "slug": "shared-activity-stable",
+    "version": "5.1.0",
+    "sdkVersion": "54.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#6C3CE1"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.example.sharedactivity"
+      "bundleIdentifier": "com.sharedactivity.stable"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6C3CE1"
       },
-      "package": "com.example.sharedactivity",
+      "package": "com.sharedactivity.stable",
       "permissions": [
-        "VIBRATE",
-        "RECEIVE_BOOT_COMPLETED",
-        "SCHEDULE_EXACT_ALARM",
-        "POST_NOTIFICATIONS"
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS"
       ]
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       [
@@ -39,7 +37,8 @@
           "icon": "./assets/icon.png",
           "color": "#6C3CE1"
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }

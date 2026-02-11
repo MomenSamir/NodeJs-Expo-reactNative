@@ -1,238 +1,193 @@
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors');
-const bcrypt = require('bcrypt');
-const cron = require('node-cron');
+const cors    = require('cors');
+const bcrypt  = require('bcrypt');
+const cron    = require('node-cron');
 require('dotenv').config();
 
-const db = require('./config/database');
+const db  = require('./config/database');
 const app = express();
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST', 'DELETE'] }
-});
+const srv = http.createServer(app);
+const io  = new Server(srv, { cors:{ origin:'*' } });
 
 app.use(cors());
 app.use(express.json());
 
-// Track connected users: userId -> socketId
-const connectedUsers = new Map();
+// userId(string) -> { socketId, username }
+const online = new Map();
+const broadcast = () => io.emit('online_users', Array.from(online.entries()).map(([userId,d])=>({ userId, username:d.username })));
 
-// ─────────────────────────────────────────────
-//  AUTH
-// ─────────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────────
 
-app.post('/api/register', async (req, res) => {
+app.post('/api/auth/register', async (req,res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    if (!username||!password) return res.status(400).json({ error:'Username and password required' });
+    const hash = await bcrypt.hash(password, 10);
+    const [r]  = await db.execute('INSERT INTO users (username,password) VALUES (?,?)', [username, hash]);
+    res.status(201).json({ user_id:r.insertId, username });
+  } catch(e) {
+    res.status(e.code==='ER_DUP_ENTRY'?400:500).json({ error: e.code==='ER_DUP_ENTRY'?'Username taken':'Registration failed' });
+  }
+});
 
-    const hashed = await bcrypt.hash(password, 10);
-    const [result] = await db.execute(
-      'INSERT INTO users (username, password) VALUES (?, ?)', [username, hashed]
+app.post('/api/auth/login', async (req,res) => {
+  try {
+    const { username, password } = req.body;
+    const [rows] = await db.execute('SELECT * FROM users WHERE username=?', [username]);
+    if (!rows.length || !await bcrypt.compare(password, rows[0].password))
+      return res.status(401).json({ error:'Invalid credentials' });
+    res.json({ user_id:rows[0].id, username:rows[0].username, points:rows[0].points });
+  } catch { res.status(500).json({ error:'Login failed' }); }
+});
+
+// ── ACTIVITIES ────────────────────────────────────────────
+
+app.get('/api/activities', async (req,res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT a.*,u.username AS creator_username FROM activities a JOIN users u ON a.user_id=u.id ORDER BY a.scheduled_time'
     );
-    res.status(201).json({ user_id: result.insertId, username });
-  } catch (e) {
-    if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Username already exists' });
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
-app.post('/api/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const [rows] = await db.execute('SELECT * FROM users WHERE username = ?', [username]);
-    if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const valid = await bcrypt.compare(password, rows[0].password);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-
-    res.json({ user_id: rows[0].id, username: rows[0].username, points: rows[0].points });
-  } catch (e) {
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// ─────────────────────────────────────────────
-//  ACTIVITIES
-// ─────────────────────────────────────────────
-
-app.get('/api/activities', async (req, res) => {
-  try {
-    const [rows] = await db.execute(`
-      SELECT a.*, u.username AS creator_username
-      FROM activities a
-      JOIN users u ON a.user_id = u.id
-      ORDER BY a.scheduled_time ASC
-    `);
     res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to load activities' });
-  }
+  } catch { res.status(500).json({ error:'Failed' }); }
 });
 
-app.post('/api/activities', async (req, res) => {
+app.post('/api/activities', async (req,res) => {
   try {
-    const { user_id, name, scheduled_time, activity_type } = req.body;
-    const [result] = await db.execute(
-      'INSERT INTO activities (user_id, name, scheduled_time, activity_type) VALUES (?, ?, ?, ?)',
-      [user_id, name, scheduled_time, activity_type]
+    const { user_id, name, scheduled_time, activity_type, repeat_days } = req.body;
+    const [r] = await db.execute(
+      'INSERT INTO activities (user_id,name,scheduled_time,activity_type,repeat_days) VALUES (?,?,?,?,?)',
+      [user_id, name, scheduled_time, activity_type, repeat_days||'0123456']
     );
     const [rows] = await db.execute(
-      'SELECT a.*, u.username AS creator_username FROM activities a JOIN users u ON a.user_id = u.id WHERE a.id = ?',
-      [result.insertId]
+      'SELECT a.*,u.username AS creator_username FROM activities a JOIN users u ON a.user_id=u.id WHERE a.id=?',
+      [r.insertId]
     );
     io.emit('activity_created', rows[0]);
     res.status(201).json(rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to create activity' });
-  }
+  } catch { res.status(500).json({ error:'Failed' }); }
 });
 
-app.post('/api/activities/:id/complete', async (req, res) => {
+app.post('/api/activities/:id/complete', async (req,res) => {
   try {
     const { id } = req.params;
     const { user_id } = req.body;
-
-    const [users] = await db.execute('SELECT username FROM users WHERE id = ?', [user_id]);
-    const username = users[0]?.username;
-
-    await db.execute(
-      'UPDATE activities SET completed = TRUE, completed_by = ?, completed_at = NOW() WHERE id = ?',
-      [username, id]
-    );
-    await db.execute('UPDATE users SET points = points + 10 WHERE id = ?', [user_id]);
-    await db.execute(
-      'INSERT INTO activity_completions (activity_id, user_id, points_earned) VALUES (?, ?, 10)',
-      [id, user_id]
-    );
-
-    const [acts] = await db.execute('SELECT * FROM activities WHERE id = ?', [id]);
-
-    io.emit('activity_completed', {
-      activity_id: id,
-      activity_name: acts[0].name,
-      user_id,
-      username,
-      points: 10,
-    });
-    io.emit('points_updated', { user_id });
-
-    res.json({ success: true, points_earned: 10 });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to complete activity' });
-  }
+    const [users] = await db.execute('SELECT username FROM users WHERE id=?', [user_id]);
+    const uname   = users[0]?.username;
+    await db.execute('UPDATE activities SET completed=1,completed_by=?,completed_at=NOW() WHERE id=?', [uname,id]);
+    await db.execute('UPDATE users SET points=points+10 WHERE id=?', [user_id]);
+    await db.execute('INSERT INTO activity_completions (activity_id,user_id,points_earned) VALUES (?,?,10)', [id,user_id]);
+    io.emit('activity_completed', { activity_id:id, user_id, username:uname });
+    io.emit('points_updated',     { user_id });
+    res.json({ success:true, points_earned:10 });
+  } catch { res.status(500).json({ error:'Failed' }); }
 });
 
-app.delete('/api/activities/:id', async (req, res) => {
+app.delete('/api/activities/:id', async (req,res) => {
   try {
-    await db.execute('DELETE FROM activities WHERE id = ?', [req.params.id]);
-    io.emit('activity_created'); // reuse to trigger reload
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to delete activity' });
-  }
+    await db.execute('DELETE FROM activities WHERE id=?', [req.params.id]);
+    io.emit('activity_deleted', { id:req.params.id });
+    res.json({ success:true });
+  } catch { res.status(500).json({ error:'Failed' }); }
 });
 
-// ─────────────────────────────────────────────
-//  POINTS
-// ─────────────────────────────────────────────
+// ── POINTS ────────────────────────────────────────────────
 
-app.get('/api/points/:userId', async (req, res) => {
+app.get('/api/points/:uid', async (req,res) => {
   try {
-    const { userId } = req.params;
-    const [mine] = await db.execute('SELECT points FROM users WHERE id = ?', [userId]);
-    const [other] = await db.execute('SELECT points FROM users WHERE id != ? LIMIT 1', [userId]);
-    res.json({
-      user_points: mine[0]?.points ?? 0,
-      partner_points: other[0]?.points ?? 0,
-    });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to get points' });
-  }
+    const { uid } = req.params;
+    const [mine]  = await db.execute('SELECT points,username FROM users WHERE id=?',    [uid]);
+    const [other] = await db.execute('SELECT points,username FROM users WHERE id!=? LIMIT 1', [uid]);
+    res.json({ user_points:mine[0]?.points??0, partner_points:other[0]?.points??0, partner_username:other[0]?.username??'Partner' });
+  } catch { res.status(500).json({ error:'Failed' }); }
 });
 
-// ─────────────────────────────────────────────
-//  SOCKET.IO
-// ─────────────────────────────────────────────
+// ── MOMENTS ───────────────────────────────────────────────
+
+app.get('/api/moments', async (req,res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT m.*,u.username FROM moments m JOIN users u ON m.user_id=u.id ORDER BY m.created_at LIMIT 100'
+    );
+    res.json(rows);
+  } catch { res.status(500).json({ error:'Failed' }); }
+});
+
+app.post('/api/moments', async (req,res) => {
+  try {
+    const { user_id, text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ error:'Text required' });
+    const [r] = await db.execute('INSERT INTO moments (user_id,text) VALUES (?,?)', [user_id, text.trim()]);
+    const [rows] = await db.execute(
+      'SELECT m.*,u.username FROM moments m JOIN users u ON m.user_id=u.id WHERE m.id=?', [r.insertId]
+    );
+    io.emit('new_moment', rows[0]);
+    res.status(201).json(rows[0]);
+  } catch { res.status(500).json({ error:'Failed' }); }
+});
+
+// ── SOCKET.IO ─────────────────────────────────────────────
 
 io.on('connection', (socket) => {
-  console.log('🔌 Client connected:', socket.id);
-
-  socket.on('register', ({ userId }) => {
-    connectedUsers.set(String(userId), socket.id);
-    console.log(`👤 User ${userId} registered`);
+  socket.on('user_online', ({ userId, username }) => {
+    online.set(String(userId), { socketId:socket.id, username });
+    socket.broadcast.emit('user_joined', { userId, username });
+    broadcast();
+    console.log(`✅ ${username} online`);
   });
 
-  socket.on('complete_activity', async ({ activityId, userId }) => {
-    try {
-      const [users] = await db.execute('SELECT username FROM users WHERE id = ?', [userId]);
-      const username = users[0]?.username;
+  socket.on('send_vibration', (data) => {
+    console.log(`📳 ${data.fromUsername} → ${data.vibrationType}`);
+    socket.broadcast.emit('receive_vibration', data);
+  });
 
-      await db.execute(
-        'UPDATE activities SET completed = TRUE, completed_by = ?, completed_at = NOW() WHERE id = ?',
-        [username, activityId]
-      );
-      await db.execute('UPDATE users SET points = points + 10 WHERE id = ?', [userId]);
-
-      const [acts] = await db.execute('SELECT * FROM activities WHERE id = ?', [activityId]);
-      io.emit('activity_completed', { activity_id: activityId, activity_name: acts[0]?.name, userId, username });
-      io.emit('points_updated', { userId });
-    } catch (e) {
-      console.error('Socket complete error:', e.message);
-    }
+  socket.on('user_offline', ({ userId }) => {
+    const info = online.get(String(userId));
+    if (info) { online.delete(String(userId)); io.emit('user_left',{ userId, username:info.username }); broadcast(); }
   });
 
   socket.on('disconnect', () => {
-    for (const [uid, sid] of connectedUsers) {
-      if (sid === socket.id) { connectedUsers.delete(uid); break; }
+    for (const [uid,info] of online) {
+      if (info.socketId === socket.id) {
+        online.delete(uid);
+        io.emit('user_left', { userId:uid, username:info.username });
+        broadcast();
+        console.log(`❌ ${info.username} offline`);
+        break;
+      }
     }
-    console.log('❌ Client disconnected:', socket.id);
   });
 });
 
-// ─────────────────────────────────────────────
-//  CRON: Check every minute for due activities
-// ─────────────────────────────────────────────
+// ── CRON: activity reminders ──────────────────────────────
 
 cron.schedule('* * * * *', async () => {
   try {
-    const now = new Date();
+    const now  = new Date();
+    const wd   = String(now.getDay());
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:00`;
-
     const [due] = await db.execute(
-      'SELECT * FROM activities WHERE scheduled_time = ? AND completed = FALSE', [time]
+      'SELECT * FROM activities WHERE scheduled_time=? AND completed=0 AND repeat_days LIKE ?',
+      [time, `%${wd}%`]
     );
-
-    for (const act of due) {
-      console.log(`⏰ Reminder: ${act.name} at ${time}`);
-      io.emit('activity_reminder', {
-        id: act.id,
-        name: act.name,
-        scheduled_time: act.scheduled_time,
-        activity_type: act.activity_type,
-        user_id: act.user_id,
-      });
+    for (const a of due) {
+      io.emit('activity_reminder', { id:a.id, name:a.name, activity_type:a.activity_type });
     }
-  } catch (e) {
-    console.error('Cron error:', e.message);
-  }
+    if (time === '00:00:00') {
+      await db.execute('UPDATE activities SET completed=0,completed_by=NULL WHERE 1=1');
+      console.log('🔄 Daily reset');
+    }
+  } catch(e) { console.error('cron:', e.message); }
 });
 
-// ─────────────────────────────────────────────
-//  START
-// ─────────────────────────────────────────────
+// ── START ─────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`
-╔═══════════════════════════════════════╗
-║  🚀 Server running on port ${PORT}       ║
-║  📱 Phone can connect via LAN IP       ║
-║  🔄 Socket.IO enabled                  ║
-║  ⏰ Activity cron job active           ║
-╚═══════════════════════════════════════╝
-  `);
-});
+srv.listen(PORT, '0.0.0.0', () => console.log(`
+╔══════════════════════════════════════╗
+║  🚀 Server v4  —  port ${PORT}          ║
+║  🟢 Online presence active           ║
+║  📳 Vibration relay active           ║
+║  💬 Moments feed active              ║
+╚══════════════════════════════════════╝`));
