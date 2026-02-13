@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getMoments, sendMoment } from '../services/api';
@@ -10,11 +11,12 @@ import { on, off } from '../services/socket';
 export default function MomentsScreen() {
   const { user }   = useAuth();
   const { C }      = useTheme();
+  const insets     = useSafeAreaInsets();
   const ref        = useRef(null);
-  const [items, setItems]   = useState([]);
-  const [text,  setText]    = useState('');
-  const [loading, setLoad]  = useState(true);
-  const [busy,  setBusy]    = useState(false);
+  const [items, setItems] = useState([]);
+  const [text,  setText]  = useState('');
+  const [loading, setLoad] = useState(true);
+  const [busy, setBusy]   = useState(false);
 
   const load = async () => {
     try { setItems(await getMoments()); }
@@ -75,7 +77,7 @@ export default function MomentsScreen() {
       {loading
         ? <View style={{ flex:1, justifyContent:'center', alignItems:'center' }}><ActivityIndicator size="large" color={C.primary} /></View>
         : <FlatList ref={ref} data={items} keyExtractor={i=>String(i.id)} renderItem={renderItem}
-            contentContainerStyle={{ padding:14, paddingBottom:8 }}
+            contentContainerStyle={{ padding:14, paddingBottom: insets.bottom + 8 }}
             onContentSizeChange={() => ref.current?.scrollToEnd({ animated:false })}
             ListEmptyComponent={
               <View style={{ alignItems:'center', paddingTop:80 }}>
@@ -87,7 +89,7 @@ export default function MomentsScreen() {
           />
       }
 
-      <View style={{ flexDirection:'row', alignItems:'flex-end', padding:12, borderTopWidth:1, borderTopColor:C.border, backgroundColor:C.card, gap:10 }}>
+      <View style={{ flexDirection:'row', alignItems:'flex-end', padding:12, paddingBottom: insets.bottom + 12, borderTopWidth:1, borderTopColor:C.border, backgroundColor:C.card, gap:10 }}>
         <TextInput style={[s.inp(C), { flex:1 }]} placeholder="Share a moment..." placeholderTextColor={C.muted}
           value={text} onChangeText={setText} multiline maxLength={300} />
         <TouchableOpacity onPress={send} disabled={!text.trim()||busy}
@@ -104,8 +106,7 @@ const s = {
   bubble: (C, mine) => ({
     maxWidth:'78%', borderRadius:18, paddingHorizontal:16, paddingVertical:10,
     backgroundColor: mine ? C.primary : C.card,
-    borderBottomRightRadius: mine ? 4 : 18,
-    borderBottomLeftRadius:  mine ? 18 : 4,
+    borderBottomRightRadius: mine ? 4 : 18, borderBottomLeftRadius: mine ? 18 : 4,
     elevation:1, shadowColor:'#000', shadowOffset:{width:0,height:1}, shadowOpacity:0.05, shadowRadius:3,
   }),
   inp: (C) => ({

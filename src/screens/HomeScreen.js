@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { getActivities, completeActivity, getPoints, deleteActivity } from '../services/api';
+import { getActivities, completeActivity, getPoints, deleteActivity, getUnreadCount } from '../services/api';
 import { connectSocket, disconnectSocket, on, off } from '../services/socket';
 import { showNotif, buzz } from '../services/notifications';
 import { TYPES, DAYS, VIBES } from '../config';
@@ -17,15 +17,22 @@ export default function HomeScreen({ navigation }) {
   const { C, dark, toggle } = useTheme();
 
   const [acts,    setActs]    = useState([]);
-  const [pts,     setPts]     = useState({ user_points:0, partner_points:0, partner_username:'Partner' });
+  const [pts,     setPts]     = useState({ user_points:0, partner_points:0, partner_username:'Partner', partner_id:null });
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [online,  setOnline]  = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const load = async () => {
     try {
-      const [a, p] = await Promise.all([getActivities(), getPoints(user.user_id)]);
-      setActs(a); setPts(p);
+      const [a, p, u] = await Promise.all([
+        getActivities(), 
+        getPoints(user.user_id),
+        getUnreadCount(user.user_id)
+      ]);
+      setActs(a); 
+      setPts(p);
+      setUnreadCount(u.unread_count);
     } catch (e) { console.log(e.message); }
     finally { setLoading(false); setRefresh(false); }
   };
@@ -52,10 +59,13 @@ export default function HomeScreen({ navigation }) {
         showNotif(`${vib.emoji} ${fromUsername} sent you a ${vib.label}!`, '');
       }
     });
+    on('new_notification', ({ unread_count }) => {
+      setUnreadCount(unread_count);
+    });
 
     return () => {
       ['online_users','user_joined','user_left','activity_created','activity_deleted',
-       'activity_completed','points_updated','activity_reminder','receive_vibration'].forEach(off);
+       'activity_completed','points_updated','activity_reminder','receive_vibration','new_notification'].forEach(off);
     };
   }, []);
 
@@ -126,6 +136,19 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
         <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+          <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={ss(C).logBtn}>
+            <MaterialIcons name="notifications" size={20} color="#fff" />
+            {unreadCount > 0 && (
+              <View style={[ss(C).badge2, { backgroundColor: '#FF6B9D' }]}>
+                <Text style={{ color:'#fff', fontSize:10, fontWeight:'bold' }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate('Profile', { userId: user.user_id })} style={[ss(C).logBtn, { backgroundColor:C.primary }]}>
+            <MaterialIcons name="person" size={20} color="#fff" />
+          </TouchableOpacity>
           <Switch value={dark} onValueChange={toggle}
             trackColor={{ false:'rgba(255,255,255,0.3)', true:'rgba(255,255,255,0.5)' }}
             thumbColor="#fff" style={{ transform:[{ scale:0.8 }] }} />
@@ -142,14 +165,18 @@ export default function HomeScreen({ navigation }) {
           <Text style={ss(C).ptsVal}>{pts.user_points}</Text>
           <MaterialIcons name="star" size={14} color={C.primary} />
         </View>
-        <View style={[ss(C).ptsCard, { backgroundColor:C.bg, borderWidth:1.5, borderColor:C.border }]}>
+        <TouchableOpacity 
+          style={[ss(C).ptsCard, { backgroundColor:C.bg, borderWidth:1.5, borderColor:C.border }]}
+          onPress={() => pts.partner_id && navigation.navigate('Profile', { userId: pts.partner_id })}
+          disabled={!pts.partner_id}>
           <View style={{ flexDirection:'row', alignItems:'center' }}>
             <View style={{ width:7, height:7, borderRadius:4, backgroundColor: partnerOnline ? C.online : C.offline, marginRight:5 }} />
             <Text style={ss(C).ptsLabel}>{pts.partner_username}</Text>
+            {pts.partner_id && <MaterialIcons name="chevron-right" size={14} color={C.muted} style={{ marginLeft:4 }} />}
           </View>
           <Text style={ss(C).ptsVal}>{pts.partner_points}</Text>
           <MaterialIcons name="star-border" size={14} color={C.primary} />
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* Quick actions */}
@@ -200,6 +227,7 @@ const ss = (C) => StyleSheet.create({
   hello:      { fontSize:20, fontWeight:'bold', color:'#fff' },
   partnerTxt: { fontSize:13, color:'rgba(255,255,255,0.8)' },
   logBtn:     { width:36, height:36, borderRadius:18, backgroundColor:'rgba(255,255,255,0.2)', justifyContent:'center', alignItems:'center' },
+  badge2:     { position:'absolute', top:-2, right:-2, minWidth:16, height:16, borderRadius:8, justifyContent:'center', alignItems:'center', paddingHorizontal:4 },
   ptsRow:     { flexDirection:'row', margin:14, gap:12 },
   ptsCard:    { flex:1, backgroundColor:C.card, borderRadius:16, padding:14, alignItems:'center', elevation:3, shadowColor:'#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.07, shadowRadius:6 },
   ptsLabel:   { fontSize:12, color:C.muted, marginBottom:4 },

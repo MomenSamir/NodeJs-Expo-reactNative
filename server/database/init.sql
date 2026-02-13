@@ -2,31 +2,61 @@ CREATE DATABASE IF NOT EXISTS shared_activity_db;
 USE shared_activity_db;
 
 CREATE TABLE IF NOT EXISTS users (
-  id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(100) UNIQUE NOT NULL,
-  password VARCHAR(255) NOT NULL, points INT DEFAULT 0,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(100) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  bio TEXT,
+  avatar_url VARCHAR(255),
+  points INT DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS activities (
-  id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, name VARCHAR(255) NOT NULL,
-  scheduled_time TIME NOT NULL, activity_type VARCHAR(50) DEFAULT 'reminder',
-  repeat_days VARCHAR(20) DEFAULT '0123456', completed TINYINT(1) DEFAULT 0,
-  completed_by VARCHAR(100) DEFAULT NULL, completed_at TIMESTAMP NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  scheduled_time TIME NOT NULL,
+  activity_type VARCHAR(50) DEFAULT 'reminder',
+  repeat_days VARCHAR(20) DEFAULT '0123456',
+  completed TINYINT(1) DEFAULT 0,
+  completed_by VARCHAR(100) DEFAULT NULL,
+  completed_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS activity_completions (
-  id INT AUTO_INCREMENT PRIMARY KEY, activity_id INT NOT NULL, user_id INT NOT NULL,
-  points_earned INT DEFAULT 10, completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  activity_id INT NOT NULL,
+  user_id INT NOT NULL,
+  points_earned INT DEFAULT 10,
+  completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS moments (
-  id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, text TEXT NOT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  text TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  from_user_id INT NOT NULL,
+  type ENUM('activity_created', 'activity_completed', 'moment_shared', 'vibration_sent') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  body TEXT,
+  data JSON,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_user_unread (user_id, is_read),
+  INDEX idx_created (created_at DESC)
 );
 
 INSERT IGNORE INTO users (username, password) VALUES

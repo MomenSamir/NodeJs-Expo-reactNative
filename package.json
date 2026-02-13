@@ -1,33 +1,36 @@
 {
-  "name": "shared-activity-stable",
-  "version": "5.1.0",
+  "name": "shared-activity-v7",
+  "version": "7.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start --tunnel",
     "clear": "expo start --clear --tunnel"
   },
   "dependencies": {
-    "@expo/vector-icons": "^14.0.0",
-    "@react-native-async-storage/async-storage": "~2.1.0",
+    "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
-    "axios": "^1.7.7",
-    "expo": "^54.0.33",
-    "expo-constants": "~17.1.8",
-    "expo-device": "~7.1.4",
-    "expo-font": "~13.3.2",
-    "expo-haptics": "~14.1.4",
-    "expo-notifications": "~0.31.5",
-    "expo-status-bar": "~2.2.3",
-    "react": "19.0.0",
-    "react-native": "0.79.6",
-    "react-native-safe-area-context": "5.4.0",
-    "react-native-screens": "~4.11.1",
-    "socket.io-client": "^4.8.0"
+    "axios": "^1.7.9",
+    "expo": "~54.0.0",
+    "expo-constants": "~18.0.13",
+    "expo-device": "~8.0.10",
+    "expo-file-system": "~19.0.21",
+    "expo-font": "~14.0.11",
+    "expo-haptics": "~15.0.8",
+    "expo-image-picker": "~17.0.10",
+    "expo-navigation-bar": "~5.0.10",
+    "expo-notifications": "~0.32.16",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.0",
-    "babel-preset-expo": "~13.0.0"
+    "@babel/core": "^7.24.0",
+    "babel-preset-expo": "^54.0.10"
   },
   "private": true
 }

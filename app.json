@@ -1,9 +1,8 @@
 {
   "expo": {
     "name": "Shared Activity",
-    "slug": "shared-activity-stable",
-    "version": "5.1.0",
-    "sdkVersion": "54.0.0",
+    "slug": "shared-activity-v7",
+    "version": "7.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -12,23 +11,23 @@
       "resizeMode": "contain",
       "backgroundColor": "#6C3CE1"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.sharedactivity.stable"
+      "bundleIdentifier": "com.sharedactivity.v7"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6C3CE1"
       },
-      "package": "com.sharedactivity.stable",
+      "package": "com.sharedactivity.v7",
       "permissions": [
         "android.permission.VIBRATE",
-        "android.permission.POST_NOTIFICATIONS"
-      ]
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_MEDIA_IMAGES"
+      ],
+      "softwareKeyboardLayoutMode": "pan"
     },
     "plugins": [
       [
@@ -38,7 +37,20 @@
           "color": "#6C3CE1"
         }
       ],
-      "expo-font"
+      [
+        "expo-navigation-bar",
+        {
+          "position": "absolute",
+          "visibility": "hidden",
+          "backgroundColor": "#00000000"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to pick profile photos"
+        }
+      ]
     ]
   }
 }
